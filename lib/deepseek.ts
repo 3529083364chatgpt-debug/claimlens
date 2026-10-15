@@ -1,5 +1,13 @@
 // ─── DeepSeek 客户端（OpenAI 兼容，JSON Mode） ────────────────────
-const BASE = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
+// 环境变量兜底：BASE_URL 被误填（缺协议头/混入其他值/带引号）时回退官方地址，
+// 避免因配置录入错误导致线上接口整体不可用。
+const DEFAULT_BASE = 'https://api.deepseek.com';
+function resolveBase(): string {
+  const raw = (process.env.DEEPSEEK_BASE_URL || '').trim().replace(/^["']|["']$/g, '');
+  if (!/^https?:\/\//i.test(raw)) return DEFAULT_BASE;
+  return raw.replace(/\/+$/, '');
+}
+const BASE = resolveBase();
 
 export interface DeepseekResult {
   ok: boolean;
@@ -12,7 +20,7 @@ export async function deepseekJson(
   user: string,
   opts: { maxTokens?: number; temperature?: number } = {},
 ): Promise<DeepseekResult> {
-  const key = process.env.DEEPSEEK_API_KEY || '';
+  const key = (process.env.DEEPSEEK_API_KEY || '').trim().replace(/\s+/g, '');
   if (!key) return { ok: false, error: 'DEEPSEEK_API_KEY 未配置' };
   const body = {
     model: 'deepseek-chat',

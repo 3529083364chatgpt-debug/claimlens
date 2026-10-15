@@ -1,9 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AnalysisReport, ClaimResult, ComplianceFinding, Evidence, Verdict } from '@/lib/types';
+import type { AnalysisReport, ClaimResult, ComplianceFinding, Evidence, ReviewComment, Verdict } from '@/lib/types';
 
-// ─── 样例 ───────────────────────────────────────────────────────
+// ─── 样例 ───────────────────────────────────────────────────
 const SAMPLES: { label: string; text: string }[] = [
   {
     label: '混合研报（核实/观点/事件）',
@@ -19,7 +19,7 @@ const SAMPLES: { label: string; text: string }[] = [
   },
 ];
 
-// ─── 结论样式 ───────────────────────────────────────────────────
+// ─── 结论样式 ───────────────────────────────────────────────
 const VERDICT_STYLE: Record<Verdict, { chip: string; dot: string; text: string }> = {
   verified: { chip: 'bg-emerald-100 text-emerald-800 border-emerald-300', dot: 'bg-emerald-500', text: '已核实' },
   conflict: { chip: 'bg-red-100 text-red-800 border-red-300', dot: 'bg-red-500', text: '与数据源冲突' },
@@ -133,6 +133,19 @@ export default function Home() {
     persist(next);
   }, [report, persist]);
 
+  // 人工审核意见：与裁决并存、可累积，带真实时间戳
+  const addComment = useCallback((kind: 'result' | 'compliance', idx: number, commentText: string) => {
+    if (!report) return;
+    const entry: ReviewComment = { text: commentText, at: new Date().toISOString() };
+    const next: AnalysisReport = { ...report };
+    if (kind === 'result') {
+      next.results = report.results.map((r, i) => (i === idx ? { ...r, comments: [...(r.comments ?? []), entry] } : r));
+    } else {
+      next.compliance = report.compliance.map((f, i) => (i === idx ? { ...f, comments: [...(f.comments ?? []), entry] } : f));
+    }
+    persist(next);
+  }, [report, persist]);
+
   const exportReport = useCallback((fmt: 'json' | 'md') => {
     if (!report) return;
     let content: string; let mime: string; let ext: string;
@@ -221,7 +234,7 @@ export default function Home() {
       {report?.results.length ? (
         <section className="mt-4 space-y-3">
           {report.results.map((r, i) => (
-            <ClaimCard key={r.claim.id + i} r={r} idx={i} onReview={review} />
+            <ClaimCard key={r.claim.id + i} r={r} idx={i} onReview={review} onComment={addComment} />
           ))}
         </section>
       ) : null}
@@ -232,7 +245,7 @@ export default function Home() {
           <h2 className="mb-3 text-base font-semibold">合规扫描发现（{report.compliance.length}）</h2>
           <div className="space-y-3">
             {report.compliance.map((f, i) => (
-              <ComplianceCard key={i} f={f} idx={i} onReview={review} />
+              <ComplianceCard key={i} f={f} idx={i} onReview={review} onComment={addComment} />
             ))}
           </div>
         </section>
@@ -249,7 +262,7 @@ export default function Home() {
   );
 }
 
-// ─── 子组件 ─────────────────────────────────────────────────────
+// ─── 子组件 ─────────────────────────────────────────────────
 function Chip({ v, label }: { v: Verdict | null; label: string }) {
   const s = v ? VERDICT_STYLE[v] : { chip: 'bg-zinc-200 text-zinc-800 border-zinc-300', dot: 'bg-zinc-500' };
   return (
@@ -259,21 +272,39 @@ function Chip({ v, label }: { v: Verdict | null; label: string }) {
   );
 }
 
-function ReviewButtons({ kind, idx, onReview, reviewed }: {
-  kind: 'result' | 'compliance'; idx: number; onReview: (k: 'result' | 'compliance', i: number, a: 'confirmed' | 'rejected', note?: string) => void;
-  reviewed: 'confirmed' | 'rejected' | null;
+type ReviewAction = 'confirmed' | 'rejected';
+type ReviewTarget = 'result' | 'compliance';
+type OnReview = (k: ReviewTarget, i: number, a: ReviewAction, note?: string) => void;
+type OnComment = (k: ReviewTarget, i: number, text: string) => void;
+
+function ReviewButtons({ kind, idx, onReview, onComment, reviewed, comments }: {
+  kind: ReviewTarget; idx: number; onReview: OnReview; onComment: OnComment;
+  reviewed: ReviewAction | null; comments: ReviewComment[];
 }) {
   const [noting, setNoting] = useState(false);
   const [note, setNote] = useState('');
+  const [commenting, setCommenting] = useState(false);
+  const [comment, setComment] = useState('');
+  const submitComment = () => {
+    const t = comment.trim();
+    if (!t) return;
+    onComment(kind, idx, t);
+    setComment('');
+    setCommenting(false);
+  };
   return (
     <div className="mt-2 border-t border-zinc-100 pt-2">
-      <div className="flex items-center gap-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="text-zinc-400">人工复核：</span>
         <button onClick={() => onReview(kind, idx, 'confirmed')}
           className={`rounded border px-2 py-0.5 ${reviewed === 'confirmed' ? 'border-emerald-400 bg-emerald-100 text-emerald-800' : 'border-zinc-300 hover:bg-zinc-100'}`}>确认无误</button>
         <button onClick={() => setNoting(!noting)}
           className={`rounded border px-2 py-0.5 ${reviewed === 'rejected' ? 'border-red-400 bg-red-100 text-red-800' : 'border-zinc-300 hover:bg-zinc-100'}`}>驳回</button>
-        {reviewed && <span className="text-zinc-400">已记录（含时间戳）</span>}
+        <button onClick={() => setCommenting(!commenting)}
+          className={`rounded border px-2 py-0.5 ${commenting ? 'border-sky-400 bg-sky-100 text-sky-800' : 'border-sky-300 text-sky-700 hover:bg-sky-50'}`}>
+          审核意见{comments.length > 0 ? ` ${comments.length}` : ''}
+        </button>
+        {reviewed && <span className="text-zinc-400">已记录</span>}
       </div>
       {noting && (
         <div className="mt-2 flex gap-2">
@@ -283,11 +314,30 @@ function ReviewButtons({ kind, idx, onReview, reviewed }: {
             className="rounded bg-red-600 px-3 py-1 text-xs text-white hover:bg-red-500">提交驳回</button>
         </div>
       )}
+      {commenting && (
+        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+          <textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={2}
+            placeholder="填写审核意见：例如「此处数据有误，2025H1 毛利率实际应为 91.30%，原文 95% 偏高」；也可写明存疑点与正确口径（将写入审计记录）"
+            className="flex-1 resize-y rounded border border-sky-300 px-2 py-1 text-xs outline-none focus:border-sky-500" />
+          <button onClick={submitComment} disabled={!comment.trim()}
+            className="self-start rounded bg-sky-600 px-3 py-1 text-xs text-white hover:bg-sky-500 disabled:opacity-40">提交意见</button>
+        </div>
+      )}
+      {comments.length > 0 && (
+        <ul className="mt-2 space-y-1">
+          {comments.map((c, i) => (
+            <li key={i} className="rounded border border-sky-200 bg-sky-50 px-2 py-1 text-xs leading-relaxed text-sky-900">
+              <span className="mr-1 font-medium text-sky-600">审核意见 · {new Date(c.at).toLocaleString('zh-CN')}</span>
+              <span>{c.text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
 
-function ClaimCard({ r, idx, onReview }: { r: ClaimResult; idx: number; onReview: (k: 'result' | 'compliance', i: number, a: 'confirmed' | 'rejected', note?: string) => void }) {
+function ClaimCard({ r, idx, onReview, onComment }: { r: ClaimResult; idx: number; onReview: OnReview; onComment: OnComment }) {
   const s = VERDICT_STYLE[r.verdict];
   const c = r.claim;
   return (
@@ -312,12 +362,12 @@ function ClaimCard({ r, idx, onReview }: { r: ClaimResult; idx: number; onReview
       )}
       <p className="mt-2 text-sm leading-relaxed text-zinc-700">{r.reason}</p>
       {r.evidence && <EvidenceView e={r.evidence} />}
-      <ReviewButtons kind="result" idx={idx} onReview={onReview} reviewed={r.reviewed} />
+      <ReviewButtons kind="result" idx={idx} onReview={onReview} onComment={onComment} reviewed={r.reviewed} comments={r.comments ?? []} />
     </article>
   );
 }
 
-function ComplianceCard({ f, idx, onReview }: { f: ComplianceFinding; idx: number; onReview: (k: 'result' | 'compliance', i: number, a: 'confirmed' | 'rejected', note?: string) => void }) {
+function ComplianceCard({ f, idx, onReview, onComment }: { f: ComplianceFinding; idx: number; onReview: OnReview; onComment: OnComment }) {
   const s = VERDICT_STYLE.violation;
   return (
     <article className="rounded-xl border border-fuchsia-200 bg-white p-4 shadow-sm">
@@ -331,7 +381,7 @@ function ComplianceCard({ f, idx, onReview }: { f: ComplianceFinding; idx: numbe
       <blockquote className="mt-2 border-l-4 border-fuchsia-300 pl-3 text-sm text-zinc-800">“{f.quote}”</blockquote>
       <p className="mt-2 text-xs text-zinc-600">{f.note}</p>
       <p className="mt-1 text-xs text-zinc-500">依据：{f.basis}</p>
-      <ReviewButtons kind="compliance" idx={idx} onReview={onReview} reviewed={f.reviewed} />
+      <ReviewButtons kind="compliance" idx={idx} onReview={onReview} onComment={onComment} reviewed={f.reviewed} comments={f.comments ?? []} />
     </article>
   );
 }
@@ -369,7 +419,7 @@ function EvidenceView({ e }: { e: Evidence }) {
   );
 }
 
-// ─── 工具函数 ───────────────────────────────────────────────────
+// ─── 工具函数 ───────────────────────────────────────────────
 function emptyReport(text: string): AnalysisReport {
   return {
     report_id: `cl-${Date.now().toString(36)}`, input_text: text, created_at: new Date().toISOString(),
@@ -411,6 +461,7 @@ function buildMarkdown(r: AnalysisReport): string {
       L.push(`- 证据：${res.evidence.source === 'fuyao' ? '扶摇' : 'iFinD'} ${res.evidence.api} @ ${res.evidence.retrieved_at}${res.evidence.request_id ? `（request_id: ${res.evidence.request_id}）` : ''}`);
     }
     L.push(`- 人工复核：${res.reviewed === 'confirmed' ? '确认无误' : res.reviewed === 'rejected' ? `驳回（${res.review_note || '未填理由'}）` : '未复核'}`);
+    for (const cm of res.comments ?? []) L.push(`- 审核意见（${cm.at}）：${cm.text}`);
     L.push('');
   }
   if (r.compliance.length) {
@@ -421,6 +472,7 @@ function buildMarkdown(r: AnalysisReport): string {
       L.push(`- 说明：${f.note}`);
       L.push(`- 依据：${f.basis}`);
       L.push(`- 人工复核：${f.reviewed === 'confirmed' ? '确认无误' : f.reviewed === 'rejected' ? `驳回（${f.review_note || '未填理由'}）` : '未复核'}`);
+      for (const cm of f.comments ?? []) L.push(`- 审核意见（${cm.at}）：${cm.text}`);
       L.push('');
     }
   }

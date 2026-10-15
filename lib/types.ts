@@ -1,4 +1,4 @@
-// ─── 论断与核验结果类型 ───────────────────────────────────────────
+// ─── 论断与核验结果类型 ───────────────────────────
 
 export type ClaimType =
   | 'market_quote'   // 行情：股价/涨跌幅/点位
@@ -36,6 +36,12 @@ export interface EvidenceField {
   date?: string;
 }
 
+// 人工审核意见（可与确认/驳回并存，可累积多条）
+export interface ReviewComment {
+  text: string;   // 审核意见正文：问题描述、正确数据等
+  at: string;     // ISO 时间戳
+}
+
 export interface Evidence {
   source: 'fuyao' | 'ifind';
   api: string;                  // 端点路径或 MCP 工具名
@@ -56,6 +62,7 @@ export interface ClaimResult {
   evidence: Evidence | null;
   reviewed: 'confirmed' | 'rejected' | null;
   review_note: string | null;
+  comments?: ReviewComment[];   // 人工审核意见（可累积，与裁决并存）
 }
 
 export interface ComplianceFinding {
@@ -66,6 +73,7 @@ export interface ComplianceFinding {
   origin: 'rule' | 'llm';
   reviewed: 'confirmed' | 'rejected' | null;
   review_note: string | null;
+  comments?: ReviewComment[];   // 人工审核意见（可累积，与裁决并存）
 }
 
 export interface ReportStats {
